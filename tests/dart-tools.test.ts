@@ -29,6 +29,7 @@ import dartExtension, {
 	summarizeFixOutput,
 	filterBuildRunnerLines,
 	summarizeBuildRunnerOutput,
+	unresolvedProjectHint,
 } from "../extensions/dart.ts";
 import { checkDartAvailable } from "../extensions/doctor.ts";
 import { runDart } from "../extensions/dartexec.ts";
@@ -151,6 +152,77 @@ describe("summarizeAnalyze", () => {
 		}));
 		const s = summarizeAnalyze(many, 2);
 		expect(s).toContain("+3 more");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Pure helpers — fresh-checkout (pub get not run) detection
+// ---------------------------------------------------------------------------
+
+// Real machine-format lines captured from `dart analyze --format=machine` on
+// a freshly bootstrapped project with .dart_tool and pubspec.lock removed:
+// every package: import fails to resolve and every symbol from those
+// packages is undefined.
+const FRESH_CHECKOUT_LINES = [
+	"ERROR|COMPILE_TIME_ERROR|URI_DOES_NOT_EXIST|/tmp/dart-fresh/test/dart_fresh_test.dart|1|8|36|Target of URI doesn't exist: 'package:dart_fresh/dart_fresh.dart'.",
+	"ERROR|COMPILE_TIME_ERROR|URI_DOES_NOT_EXIST|/tmp/dart-fresh/test/dart_fresh_test.dart|2|8|24|Target of URI doesn't exist: 'package:test/test.dart'.",
+	"ERROR|COMPILE_TIME_ERROR|URI_DOES_NOT_EXIST|/tmp/dart-fresh/example/dart_fresh_example.dart|1|8|36|Target of URI doesn't exist: 'package:dart_fresh/dart_fresh.dart'.",
+	"ERROR|COMPILE_TIME_ERROR|UNDEFINED_FUNCTION|/tmp/dart-fresh/test/dart_fresh_test.dart|5|3|5|The function 'group' isn't defined.",
+	"ERROR|COMPILE_TIME_ERROR|UNDEFINED_FUNCTION|/tmp/dart-fresh/test/dart_fresh_test.dart|9|5|5|The function 'test' isn't defined.",
+	"ERROR|COMPILE_TIME_ERROR|UNDEFINED_CLASS|/tmp/dart-fresh/example/dart_fresh_example.dart|4|17|7|The function 'Awesome' isn't defined.",
+].map((l) => parseAnalyzeMachineLine(l)!);
+
+// One genuinely broken import (a typo) alongside real code errors — the
+// case where the hint must NOT fire, because these need fixing in code.
+const MIXED_SIGNAL_LINES = [
+	"ERROR|COMPILE_TIME_ERROR|URI_DOES_NOT_EXIST|/tmp/real/lib/a.dart|1|8|30|Target of URI doesn't exist: 'package:typo/wrong.dart'.",
+	"ERROR|COMPILE_TIME_ERROR|RETURN_OF_INVALID_TYPE|/tmp/real/lib/b.dart|2|10|12|A value of type 'String' can't be returned from the function 'broken' because it has a return type of 'int'.",
+	"ERROR|COMPILE_TIME_ERROR|INVALID_CAST|/tmp/real/lib/c.dart|8|12|4|This cast is always invalid.",
+].map((l) => parseAnalyzeMachineLine(l)!);
+
+describe("unresolvedProjectHint", () => {
+	test("fires on a fresh-checkout report and names the missing packages", () => {
+		const hint = unresolvedProjectHint(FRESH_CHECKOUT_LINES);
+		expect(hint).toBeDefined();
+		expect(hint).toContain("6 of 6 diagnostics");
+		expect(hint).toContain("dart pub get");
+		expect(hint).toContain("dart_fresh, test");
+	});
+
+	test("mentions unrelated diagnostics when some are not resolution-related", () => {
+		const lines = [
+			...FRESH_CHECKOUT_LINES,
+			parseAnalyzeMachineLine(
+				"ERROR|COMPILE_TIME_ERROR|INVALID_CAST|/tmp/dart-fresh/lib/x.dart|3|1|4|This cast is always invalid.",
+			)!,
+		];
+		const hint = unresolvedProjectHint(lines);
+		expect(hint).toBeDefined();
+		expect(hint).toContain("1 diagnostic(s) are unrelated");
+	});
+
+	test("does not fire on mixed signal (one typo'd import among real errors)", () => {
+		expect(unresolvedProjectHint(MIXED_SIGNAL_LINES)).toBeUndefined();
+	});
+
+	test("does not fire on ordinary errors with no package-URI failures", () => {
+		expect(unresolvedProjectHint([parseAnalyzeMachineLine(REAL_ERROR_LINE)!])).toBeUndefined();
+	});
+
+	test("does not fire on an empty report", () => {
+		expect(unresolvedProjectHint([])).toBeUndefined();
+	});
+
+	test("caps the missing-package list at five", () => {
+		const lines = Array.from({ length: 10 }, (_, i) =>
+			parseAnalyzeMachineLine(
+				`ERROR|COMPILE_TIME_ERROR|URI_DOES_NOT_EXIST|/tmp/x/f${i}.dart|1|8|30|Target of URI doesn't exist: 'package:pkg${i}/lib${i}.dart'.`,
+			)!,
+		);
+		const hint = unresolvedProjectHint(lines);
+		expect(hint).toBeDefined();
+		expect(hint).toContain("pkg0, pkg1, pkg2, pkg3, pkg4, …");
+		expect(hint).not.toContain("pkg9");
 	});
 });
 
@@ -455,8 +527,18 @@ describe("dart_analyze tool", () => {
 	test(
 		"diagnosticLimit caps the listing",
 		async () => {
-			const res = await execute("dart_analyze", { diagnosticLimit: 0 }, { cwd: FIXTURE_DIR });
-			expect(res.content[0].text).toContain("+1 more");
+			// Count the per-file diagnostic lines in an uncapped run first, then
+			// cap below that. Asserting against a computed count (rather than a
+			// hardcoded "+1 more") keeps this independent of how many warnings
+			// the fixture's resolved lints happen to emit on a given SDK.
+			const full = await execute("dart_analyze", {}, { cwd: FIXTURE_DIR });
+			const total = full.details.issueCount as number;
+			expect(total).toBeGreaterThan(0);
+
+			const capped = await execute("dart_analyze", { diagnosticLimit: 0 }, { cwd: FIXTURE_DIR });
+			expect(capped.content[0].text).toContain(`+${total} more`);
+			// with limit 0 no diagnostic lines appear — only the summary header
+			expect(capped.content[0].text).not.toMatch(/^\s+\d+:\d+ \[/m);
 		},
 		120_000,
 	);

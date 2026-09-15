@@ -235,7 +235,6 @@ export function parseAnalyzeMachineLine(line: string): Diagnostic | null {
 
 export function summarizeAnalyze(diagnostics: Diagnostic[], limit: number): string {
 	if (diagnostics.length === 0) return "No issues found.";
-
 	const byFile = new Map<string, Diagnostic[]>();
 	for (const d of diagnostics) {
 		if (!byFile.has(d.file)) byFile.set(d.file, []);
@@ -265,6 +264,51 @@ export function summarizeAnalyze(diagnostics: Diagnostic[], limit: number): stri
 	}
 
 	return lines.join("\n");
+}
+
+// --- unresolvable-project hint -------------------------------------------
+// On a fresh checkout where `dart pub get` has never run (no
+// .dart_tool/package_config.json), `dart analyze` reports phantom errors:
+// URI_DOES_NOT_EXIST / URI_HAS_NOT_BEEN_GENERATED for `package:` imports and
+// UNDEFINED_* for symbols from unresolved packages. These arrive as ordinary
+// COMPILE_TIME_ERRORs — indistinguishable from genuinely broken imports by
+// code alone. The heuristic below is deliberately conservative: it only
+// fires when package-URI resolution failures DOMINATE the diagnostics, so a
+// single typo'd import alongside real code errors does not trigger it.
+
+const PACKAGE_URI_CODES = new Set(["URI_DOES_NOT_EXIST", "URI_HAS_NOT_BEEN_GENERATED"]);
+const UNRESOLVED_SYMBOL_CODES = new Set(["UNDEFINED_FUNCTION", "UNDEFINED_CLASS", "UNDEFINED_IDENTIFIER", "UNDEFINED_METHOD", "UNDEFINED_GETTER", "UNDEFINED_SETTER", "UNDEFINED_NAME", "UNDEFINED_EXTENSION"]);
+
+export function unresolvedProjectHint(diagnostics: Diagnostic[]): string | undefined {
+	if (diagnostics.length === 0) return undefined;
+
+	// Which diagnostics reference package: imports vs everything else.
+	const packageUriFailures = diagnostics.filter((d) => PACKAGE_URI_CODES.has(d.code));
+	const undefinedSymbols = diagnostics.filter((d) => UNRESOLVED_SYMBOL_CODES.has(d.code));
+	const other = diagnostics.length - packageUriFailures.length - undefinedSymbols.length;
+
+	// Package-URI failures present, and they (or their symbol-level fallout)
+	// account for the bulk of the report. 80% keeps the hint away from mixed
+	// signal where a real import is broken alongside real errors.
+	const unresolvedShare = packageUriFailures.length + undefinedSymbols.length;
+	if (packageUriFailures.length === 0 || unresolvedShare / diagnostics.length < 0.8) {
+		return undefined;
+	}
+
+	const missing = new Set<string>();
+	for (const d of packageUriFailures) {
+		const m = d.message.match(/package:([^'/]+)\//);
+		if (m) missing.add(m[1]);
+	}
+	const missingNote = missing.size > 0
+		? ` (unresolved package${missing.size > 1 ? "s" : ""}: ${[...missing].slice(0, 5).join(", ")}${missing.size > 5 ? ", …" : ""})`
+		: "";
+
+	return (
+		`Note: ${unresolvedShare} of ${diagnostics.length} diagnostics are unresolvable package: imports or symbols from them${missingNote}. ` +
+		`This pattern usually means dependencies have not been fetched in this environment — has \`dart pub get\` been run here? ` +
+		(other > 0 ? `${other} diagnostic(s) are unrelated to package resolution and may still be real.` : "")
+	).trim();
 }
 
 function registerDartAnalyze(pi: ExtensionAPI) {
@@ -309,12 +353,18 @@ function registerDartAnalyze(pi: ExtensionAPI) {
 			const errors = diagnostics.filter((d) => d.severity === "ERROR");
 			const summary = summarizeAnalyze(diagnostics, limit);
 
-			return result(summary, {
+			// Fresh-checkout detection: a report dominated by unresolvable
+			// package: imports usually means pub get hasn't run here — surface
+			// that before the model starts "fixing" phantom import errors.
+			const hint = unresolvedProjectHint(diagnostics);
+
+			return result(hint ? `${summary}\n\n${hint}` : summary, {
 				ok: true,
 				issueCount: diagnostics.length,
 				errorCount: errors.length,
 				warningCount: diagnostics.length - errors.length,
 				hasErrors: errors.length > 0,
+				...(hint ? { unresolvedProjectHint: true } : {}),
 			}, errors.length > 0);
 		},
 	});

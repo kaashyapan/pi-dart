@@ -1,7 +1,7 @@
 {
     "name": "pi-dart",
-    "version": "0.0.1",
-    "description": "For dart language. Brings dart analyzer and build_runner as harness tools.",
+    "version": "0.0.2",
+    "description": "Pi extension for dart and flutter. Brings dart analyzer and build_runner as harness tools.",
     "license": "BSD-3-Clause",
     "author": "kaashyapan",
     "repository": {

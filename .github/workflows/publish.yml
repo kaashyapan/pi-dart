@@ -20,7 +20,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -28,9 +28,19 @@ jobs:
       # The test suite is integration-grade: it executes the registered
       # tool handlers against real `dart` runs (analyze/test/fix/build_runner)
       # on the fixture packages, so the Dart SDK must be on PATH — which also
-      # dogfoods the extension's own runtime dependency.
+      # dogfoods the extension's own runtime dependency. `pub get` resolves
+      # each fixture from pubspec.yaml; the fixtures deliberately ship no
+      # .dart_tool so package_config.json always matches the runner's
+      # pub-cache, never the authoring machine's.
       - name: Install Dart SDK
         uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.13.2
+          
+      - name: Resolve fixture dependencies
+        run: |
+          (cd fixtures/dart-sample && dart pub get)
+          (cd fixtures/dart-broken && dart pub get)
 
       - name: Typecheck
         run: bun run typecheck

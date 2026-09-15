@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.tgz
 .DS_Store
+
+# Dart — always regenerated from pubspec by `dart pub get`
+.dart_tool/
+pubspec.lock
