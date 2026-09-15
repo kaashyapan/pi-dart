@@ -1,0 +1,5 @@
+name: dart_broken
+description: Fixture package with a deliberate analyze error, for pi-dart integration tests.
+publish_to: none
+environment:
+  sdk: ^3.0.0

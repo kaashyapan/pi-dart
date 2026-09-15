@@ -1,0 +1,52 @@
+{
+    "name": "pi-dart",
+    "version": "0.0.1",
+    "description": "For dart language. Brings dart analyzer and build_runner as harness tools.",
+    "license": "BSD-3-Clause",
+    "author": "kaashyapan",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/kaashyapan/pi-dart.git"
+    },
+    "homepage": "https://github.com/kaashyapan/pi-dart",
+    "bugs": {
+        "url": "https://github.com/kaashyapan/pi-dart/issues"
+    },
+    "type": "module",
+    "sideEffects": false,
+    "engines": {
+        "node": ">=22.19.0"
+    },
+    "keywords": [
+        "pi-package",
+        "pi",
+        "harness",
+        "dart"
+    ],
+    "pi": {
+        "extensions": [
+            "./extensions/dart.ts"
+        ]
+    },
+    "files": [
+        "LICENSE",
+        "README.md",
+        "extensions",
+        "tsconfig.json"
+    ],
+    "peerDependencies": {
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*"
+    },
+    "devDependencies": {
+        "@types/bun": "^1.4.2",
+        "@types/node": "^24.12.4",
+        "typescript": "^5.9.3"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "test": "bun test",
+        "pack:dry": "bun pm pack --dry-run",
+        "verify": "bun run typecheck && bun run test && bun run pack:dry"
+    }
+}

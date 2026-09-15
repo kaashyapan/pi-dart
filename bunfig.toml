@@ -1,0 +1,5 @@
+# bun test discovers only tests/ — the fixture modules under fixtures/
+# generate *_test.js files in their _build on js-target runs, which bun
+# would otherwise pick up and try to execute.
+[test]
+root = "tests"
